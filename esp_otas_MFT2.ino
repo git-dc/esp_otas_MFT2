@@ -1,10 +1,10 @@
 
 
 /*********
-  Rui Santos
-  Complete project details at http://randomnerdtutorials.com
-  Arduino IDE example: Examples > Arduino OTA > BasicOTA.ino
+ Daniel Chirita
+  Using Rui Santos's OTA code (Complete project details at http://randomnerdtutorials.com).
 *********/
+
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
@@ -13,17 +13,26 @@
 #include <Wire.h>
 #include <Adafruit_ADS1015.h>
 
+#define WIFI_SSID "2.4g"
+#define WIFI_PSK "dauyndauyn"
+#define OTA_PSK "dauyndauyn"
+#define HOSTNAME "ftp_meter_0"
+#define MQTT_SERVER "house"
+#define MQTT_TOPIC "FTP"
+#define MQTT_IN_TOPIC "inTopic"
+
 // Update these with values suitable for your network.
 
 // cnk vars begin:
 unsigned long currentTime = millis();
-const char* ssid = "2.4g";
-const char* HOSTNAME = "ft_meter_0";
-const char* password = "dauyndauyn";
-const char* ota_password = "dauyndauyn";
+unsigned long DebugloopTime = currentTime;
+bool debug = false;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PSK;
+const char* ota_password = OTA_PSK;
   // mqtt setup begin:
-  const char* mqtt_server = "lubuntuN7";
-  const char* mqtt_topic = "outTopic";
+  const char* mqtt_server = MQTT_SERVER;
+  const char* mqtt_topic = MQTT_TOPIC;
   char msg[50];
   WiFiClient espClient;
   PubSubClient client(espClient);
@@ -56,6 +65,12 @@ double Vcc = 3.3;
 unsigned long TloopTime = currentTime;;
 // temp vars end;
 
+// pressure vars begin:
+double presC; // cold pipe (13 for flow, adc0 for temp)
+double presH; // hot pipe (12 for flow, adc1 for temp)
+unsigned long PloopTime = currentTime;;
+// pressure vars end;
+
 
 // secup vars begin:
 const int updateButton=0; // gpio0 button (red led)
@@ -67,7 +82,7 @@ bool secup = false;
 
 // adc vars begin:
 Adafruit_ADS1115 adc(0x48);
-int16_t adc0, adc1;
+int16_t adc0, adc1, adc2, adc3;
 // adc vars end;
 
 
@@ -134,7 +149,7 @@ void reconnect()
       sprintf(msg, "%s reconnected.", clientId.c_str());
       client.publish(mqtt_topic, msg);
       // ... and resubscribe
-      client.subscribe("inTopic");
+      client.subscribe(MQTT_IN_TOPIC);
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -152,7 +167,6 @@ void setup() {
   delay(100);
   Serial.begin(115200);
   Serial.println("Booting");
-  
   setup_wifi();
   
   // Port defaults to 8266
@@ -209,6 +223,9 @@ void setup() {
 }
 
 void loop() {
+   
+  currentTime = millis();
+  
   if (!client.connected()) {
     reconnect();
   }
@@ -222,8 +239,7 @@ void loop() {
     digitalWrite(ESP_BUILTIN_LED, ledState);
   }  
   // blink blurb end;
-  
-  currentTime = millis();
+
 
   // secup blurb begin:
   if(secup){
@@ -241,26 +257,29 @@ void loop() {
   }
   else ArduinoOTA.handle(); // no secup
   // secup blurb end;
+
   
   
-  if(currentTime >= (TloopTime + 5000))
+  if(currentTime >= (TloopTime + 1000))
   { 
     TloopTime=currentTime;  
     
     // tempC loop blurb begin:
     adc0 = adc.readADC_SingleEnded(0);
     tempC = 263.0 - 22.0*log( Rs / ( ( ( Vcc * 32767.0 ) / adc0 ) - 1.0 ) ); // based on 50kOhm B=3995 thermistor exponential approximation curve
-    sprintf(msg, "tempC C: %d.%d", int(tempC), int(tempC * 100) %100);
+    sprintf(msg, "%s tempC C: %d.%d", HOSTNAME, int(tempC), int(tempC * 100) %100);
     Serial.println(msg); client.publish(mqtt_topic, msg); 
     // tempC loop blurb end;
 
     // tempH loop blurb begin:
     adc1 = adc.readADC_SingleEnded(1);
     tempH = 263.0 - 22.0*log( Rs / ( ( ( Vcc * 32767.0 ) / adc1 ) - 1.0 ) ); // based on 50kOhm B=3995 thermistor exponential approximation curve
-    sprintf(msg, "tempH C: %d.%d", int(tempH), int(tempH * 100) %100);
+    sprintf(msg, "%s tempH C: %d.%d", HOSTNAME, int(tempH), int(tempH * 100) %100);
     Serial.println(msg); client.publish(mqtt_topic, msg); 
     // tempH loop blurb end;
   }
+
+
   
   if(currentTime >= (FloopTime + 1000))
   { 
@@ -269,19 +288,52 @@ void loop() {
     // flowC loop blurb begin:
     l_min = (flow_frequencyC / 11.0); // (Pulse frequency (Hz) / 11) = flowrate in L/min for YF-B7 flow sensor.
     flow_frequencyC = 0; // Reset Counter
-    sprintf(msg, "flowC L/min: %d.%d", int(l_min), int(l_min*100) %100);
+    sprintf(msg, "%s flowC L/min: %d.%d", HOSTNAME, int(l_min), int(l_min*100) %100);
     Serial.println(msg); client.publish(mqtt_topic, msg);  
     // flowC loop blurb end;
 
     // flowH loop blurb begin:
     l_min = (flow_frequencyH / 11.0); // (Pulse frequency (Hz) / 11) = flowrate in L/min for YF-B7 flow sensor.
     flow_frequencyH = 0; // Reset Counter
-    sprintf(msg, "flowH L/min: %d.%d", int(l_min), int(l_min*100) %100);
+    sprintf(msg, "%s flowH L/min: %d.%d", HOSTNAME, int(l_min), int(l_min*100) %100);
     Serial.println(msg); client.publish(mqtt_topic, msg);  
     // flowH loop blurb end;
-
   }
+
+
+if(currentTime >= (PloopTime + 1000))
+  { 
+    PloopTime=currentTime;  
+    
+    // presC loop blurb begin:
+    adc3 = adc.readADC_SingleEnded(3);
+    //presC = 263.0 - 22.0*log( Rs / ( ( ( Vcc * 32767.0 ) / adc3 ) - 1.0 ) ); // based on 50kOhm B=3995 thermistor exponential approximation curve
+    presC = 200*adc3/65535.0;
+    sprintf(msg, "%s presC psi: %d.%d", HOSTNAME, int(presC), int(presC * 100) %100);
+    Serial.println(msg); client.publish(mqtt_topic, msg); 
+    // presC loop blurb end;
+
+    // presH loop blurb begin:
+    adc2 = adc.readADC_SingleEnded(2);
+    //presH = 263.0 - 22.0*log( Rs / ( ( ( Vcc * 32767.0 ) / adc2 ) - 1.0 ) ); // based on 50kOhm B=3995 thermistor exponential approximation curve
+    presH = 200*adc2/65535.0;
+    sprintf(msg, "%s presH psi: %d.%d", HOSTNAME, int(presH), int(presH * 100) %100);
+    Serial.println(msg); client.publish(mqtt_topic, msg); 
+    // presH loop blurb end;
+  }
+
   
+  if(currentTime >= (DebugloopTime + 1000000))
+  { 
+    DebugloopTime=currentTime;  
+   
+    // debug loop blurb begin:
+    sprintf(msg, "debug info: %d.%d", int(Vcc), int(Vcc * 100) %100);
+    //Serial.println(msg); client.publish(mqtt_topic, msg); 
+    // debug loop blurb end;
+    
+  }
+
 }
 
 
